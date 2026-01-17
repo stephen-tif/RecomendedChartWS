@@ -62,32 +62,46 @@ def upload_file():
                 'message': 'Por favor selecciona un archivo para cargar'
             }), 400
         
-        # Procesar carga (valida, guarda archivo)
-        upload_result = file_service.process_upload(file)
-        filepath = upload_result['filepath']
-        in_memory = upload_result.get('in_memory', False)
+        # Validar extensión del archivo antes de procesar
+        from app.utils.validators import validate_file
+        try:
+            validate_file(file)
+        except ValueError as e:
+            return jsonify({
+                'error': 'Error de validación',
+                'message': str(e)
+            }), 400
         
-        logger.info(f"Archivo cargado exitosamente: {upload_result['filename']}")
+        filename = file.filename
         
-        # Guardar el archivo en sesión para procesamiento en memoria
-        file.seek(0)  # Volver al inicio del stream
+        # Obtener el tamaño del archivo
+        file.seek(0, 2)  # Ir al final
+        file_size = file.tell()
+        file.seek(0)  # Volver al inicio
         
-        # Crear un BytesIO desde el archivo para pasar al servicio de gráficos
+        logger.info(f"Archivo recibido: {filename} ({file_size} bytes)")
+        
+        # Crear BytesIO para procesamiento en memoria
         file_bytes = io.BytesIO(file.read())
-        file_bytes.name = upload_result['filename']
+        file_bytes.name = filename
         
-        # Obtener recomendaciones de gráficos (incluye procesamiento de DataFrame y análisis de IA)
-        # Pasar el archivo en lugar del filepath para soportar filesystems de solo lectura
-        recommendations_result = chart_service.recommend_chart_file(file_bytes, upload_result['filename'])
+        # Obtener recomendaciones de gráficos directamente desde bytes
+        # Sin intentar guardar a disco (Vercel tiene filesystem de solo lectura)
+        recommendations_result = chart_service.recommend_chart_file(file_bytes, filename)
+        
+        # Guardar el archivo en sesión para uso posterior
+        file_bytes.seek(0)
+        session['uploaded_file'] = file_bytes
+        session['uploaded_filename'] = filename
         
         # Combinar resultados
         response = {
             'status': 'success',
             'message': 'Archivo cargado y analizado exitosamente',
             'file_info': {
-                'filename': upload_result['filename'],
-                'size': upload_result['size'],
-                'filepath': upload_result['filepath']
+                'filename': filename,
+                'size': file_size,
+                'filepath': None  # No hay ruta física en Vercel
             },
             'recommendations': recommendations_result['recommendations'],
             'data_summary': recommendations_result['data_summary']
