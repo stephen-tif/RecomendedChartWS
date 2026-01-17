@@ -4,9 +4,7 @@ Maneja endpoints de recuperación de datos de gráficos
 Siguiendo los principios de diseño RESTful API
 """
 import logging
-import io
-import base64
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify
 from app.services.chart_service import ChartService
 
 logger = logging.getLogger(__name__)
@@ -74,8 +72,9 @@ def get_chart_data():
                 'message': 'Por favor proporciona un cuerpo de solicitud con filepath, chart_type y parameters'
             }), 400
         
-        # Extraer campos requeridos
-        filepath = data.get('filepath')
+        # Extraer campos - soportar tanto file_id como filepath
+        file_id = data.get('file_id')  # Nuevo: ID de archivo temporal
+        filepath = data.get('filepath')  # Antiguo: ruta de archivo
         chart_type = data.get('chart_type')
         parameters = data.get('parameters')
         aggregation = data.get('aggregation', 'sum')
@@ -120,38 +119,33 @@ def get_chart_data():
                 'message': 'parameters debe incluir x_axis'
             }), 400
         
-        # Verificar si hay un archivo en la sesión (del último upload)
-        uploaded_file_base64 = session.get('uploaded_file_base64')
-        uploaded_filename = session.get('uploaded_filename')
-        
-        # Si hay un archivo en sesión, usarlo directamente (Vercel/memoria)
-        if uploaded_file_base64 and uploaded_filename:
+        # Prioridad 1: Usar file_id del almacenamiento temporal (recomendado)
+        if file_id:
             try:
-                # Decodificar el archivo desde base64
-                file_content = base64.b64decode(uploaded_file_base64)
-                file_bytes = io.BytesIO(file_content)
+                file_bytes, filename = chart_service.get_temp_file(file_id)
+                if not file_bytes or not filename:
+                    logger.error(f"Archivo temporal no encontrado: {file_id}")
+                    return jsonify({
+                        'error': 'Archivo expirado',
+                        'message': 'El archivo ha expirado. Por favor carga el archivo nuevamente.'
+                    }), 404
                 
+                logger.info(f"Usando archivo temporal con ID: {file_id}")
                 chart_data = chart_service.get_chart_data_bytes(
                     file_bytes=file_bytes,
-                    filename=uploaded_filename,
+                    filename=filename,
                     chart_type=chart_type,
                     parameters=parameters,
                     aggregation=aggregation
                 )
             except Exception as e:
-                logger.error(f"Error usando archivo en memoria de sesión: {str(e)}", exc_info=True)
+                logger.error(f"Error usando archivo temporal: {str(e)}", exc_info=True)
                 return jsonify({
                     'error': 'Error interno del servidor',
                     'message': 'Ocurrió un error al generar los datos del gráfico. Por favor intenta nuevamente.'
                 }), 500
-        else:
-            # Intentar usar filepath si está disponible (para compatibilidad con ambientes locales)
-            if not filepath:
-                return jsonify({
-                    'error': 'Error de configuración',
-                    'message': 'No hay archivo disponible. Por favor carga un archivo primero.'
-                }), 400
-            
+        # Prioridad 2: Usar filepath si está disponible (para compatibilidad con ambientes locales)
+        elif filepath:
             try:
                 # Intentar cargar desde filepath (puede fallar en Vercel)
                 chart_data = chart_service.get_chart_data(
@@ -165,7 +159,7 @@ def get_chart_data():
                 logger.error(f"Archivo no encontrado: {filepath}")
                 return jsonify({
                     'error': 'Archivo no disponible',
-                    'message': 'El archivo ha expirado o no está disponible. Por favor carga el archivo nuevamente.'
+                    'message': 'El archivo no se encontró. Por favor carga el archivo nuevamente.'
                 }), 404
             except Exception as e:
                 logger.error(f"Error generando datos del gráfico: {str(e)}")
@@ -173,6 +167,12 @@ def get_chart_data():
                     'error': 'Error interno del servidor',
                     'message': 'Ocurrió un error al generar los datos del gráfico. Por favor intenta nuevamente.'
                 }), 500
+        else:
+            # Ni file_id ni filepath proporcionados
+            return jsonify({
+                'error': 'Campo requerido faltante',
+                'message': 'Por favor proporciona file_id o filepath'
+            }), 400
         
         logger.info(f"Datos de gráfico {chart_type} generados exitosamente")
         
