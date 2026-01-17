@@ -51,6 +51,48 @@ class DataFrameService:
             logger.error(f"Error al cargar archivo {filepath}: {str(e)}")
             raise
     
+    def load_from_bytes(self, file_bytes: Any, filename: str) -> pd.DataFrame:
+        """
+        Cargar datos desde bytes/BytesIO al DataFrame
+        Útil para sistemas con filesystems de solo lectura
+        
+        Args:
+            file_bytes: Objeto BytesIO o similar con datos del archivo
+            filename (str): Nombre del archivo (para determinar tipo)
+            
+        Returns:
+            pd.DataFrame: DataFrame cargado
+            
+        Raises:
+            ValueError: Si el tipo de archivo no es soportado
+        """
+        try:
+            # Extraer extensión del nombre de archivo
+            if '.' not in filename:
+                raise ValueError(f'Archivo sin extensión: {filename}')
+            
+            file_ext = filename.rsplit('.', 1)[1].lower()
+            
+            # Asegurarse de que estamos al principio del stream
+            if hasattr(file_bytes, 'seek'):
+                file_bytes.seek(0)
+            
+            if file_ext == 'csv':
+                df = pd.read_csv(file_bytes)
+            elif file_ext in ['xlsx', 'xls']:
+                df = pd.read_excel(file_bytes)
+            elif file_ext == 'json':
+                df = pd.read_json(file_bytes)
+            else:
+                raise ValueError(f'Tipo de archivo no soportado: {file_ext}')
+            
+            logger.info(f"DataFrame cargado exitosamente desde bytes ({filename}). Forma: {df.shape}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error al cargar archivo desde bytes ({filename}): {str(e)}")
+            raise
+    
     def get_dataframe_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Obtener resumen completo del DataFrame incluyendo describe() e info()

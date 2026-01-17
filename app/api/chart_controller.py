@@ -4,7 +4,8 @@ Maneja endpoints de recuperación de datos de gráficos
 Siguiendo los principios de diseño RESTful API
 """
 import logging
-from flask import Blueprint, request, jsonify
+import io
+from flask import Blueprint, request, jsonify, session
 from app.services.chart_service import ChartService
 
 logger = logging.getLogger(__name__)
@@ -118,13 +119,39 @@ def get_chart_data():
                 'message': 'parameters debe incluir x_axis'
             }), 400
         
-        # Obtener datos del gráfico
-        chart_data = chart_service.get_chart_data(
-            filepath=filepath,
-            chart_type=chart_type,
-            parameters=parameters,
-            aggregation=aggregation
-        )
+        # Verificar si hay un archivo en la sesión (del último upload)
+        uploaded_file = session.get('uploaded_file')
+        uploaded_filename = session.get('uploaded_filename')
+        
+        # Intentar usar el archivo en memoria primero, luego el filepath
+        if uploaded_file and uploaded_filename:
+            # El archivo cargado recientemente está en memoria
+            # Usarlo en lugar del filepath
+            try:
+                chart_data = chart_service.get_chart_data_bytes(
+                    file_bytes=uploaded_file,
+                    filename=uploaded_filename,
+                    chart_type=chart_type,
+                    parameters=parameters,
+                    aggregation=aggregation
+                )
+            except Exception as e:
+                # Si falla con el archivo en memoria, intentar con filepath
+                logger.warning(f"Error usando archivo en memoria: {str(e)}, intentando con filepath")
+                chart_data = chart_service.get_chart_data(
+                    filepath=filepath,
+                    chart_type=chart_type,
+                    parameters=parameters,
+                    aggregation=aggregation
+                )
+        else:
+            # Usar el filepath proporcionado
+            chart_data = chart_service.get_chart_data(
+                filepath=filepath,
+                chart_type=chart_type,
+                parameters=parameters,
+                aggregation=aggregation
+            )
         
         logger.info(f"Datos de gráfico {chart_type} generados exitosamente")
         

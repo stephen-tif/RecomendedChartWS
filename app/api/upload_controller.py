@@ -4,7 +4,8 @@ Maneja la carga de archivos y recomendaciones automáticas de gráficos
 Siguiendo los principios de diseño RESTful API
 """
 import logging
-from flask import Blueprint, request, jsonify
+import io
+from flask import Blueprint, request, jsonify, session
 from app.services.file_service import FileService
 from app.services.chart_service import ChartService
 
@@ -64,11 +65,20 @@ def upload_file():
         # Procesar carga (valida, guarda archivo)
         upload_result = file_service.process_upload(file)
         filepath = upload_result['filepath']
+        in_memory = upload_result.get('in_memory', False)
         
         logger.info(f"Archivo cargado exitosamente: {upload_result['filename']}")
         
+        # Guardar el archivo en sesión para procesamiento en memoria
+        file.seek(0)  # Volver al inicio del stream
+        
+        # Crear un BytesIO desde el archivo para pasar al servicio de gráficos
+        file_bytes = io.BytesIO(file.read())
+        file_bytes.name = upload_result['filename']
+        
         # Obtener recomendaciones de gráficos (incluye procesamiento de DataFrame y análisis de IA)
-        recommendations_result = chart_service.recommend_chart(filepath)
+        # Pasar el archivo en lugar del filepath para soportar filesystems de solo lectura
+        recommendations_result = chart_service.recommend_chart_file(file_bytes, upload_result['filename'])
         
         # Combinar resultados
         response = {
