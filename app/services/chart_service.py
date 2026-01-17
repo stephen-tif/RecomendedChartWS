@@ -4,17 +4,12 @@ Maneja la generación de gráficos, recomendaciones y agregación de datos
 Siguiendo el Patrón de Capa de Servicio
 """
 import logging
-import uuid
 from typing import Dict, Any, List, Optional
 import pandas as pd
 from app.services.dataframe_service import DataFrameService
 from app.services.ai_analysis_service import AIAnalysisService
 
 logger = logging.getLogger(__name__)
-
-# Almacenamiento temporal en memoria para archivos cargados
-# Estructura: {uuid: {'filename': str, 'bytes': BytesIO, 'timestamp': float}}
-_temp_files = {}
 
 
 class ChartService:
@@ -32,58 +27,7 @@ class ChartService:
         self.df_service = df_service or DataFrameService()
         self.ai_service = ai_service or AIAnalysisService()
     
-    @staticmethod
-    def save_temp_file(file_bytes: Any, filename: str) -> str:
-        """
-        Guardar archivo temporalmente en memoria y devolver UUID
-        
-        Args:
-            file_bytes: Objeto BytesIO con datos del archivo
-            filename (str): Nombre del archivo
-            
-        Returns:
-            str: UUID que identifica el archivo temporal
-        """
-        import time
-        file_id = str(uuid.uuid4())
-        _temp_files[file_id] = {
-            'filename': filename,
-            'bytes': file_bytes,
-            'timestamp': time.time()
-        }
-        logger.info(f"Archivo temporal guardado con ID: {file_id}")
-        return file_id
-    
-    @staticmethod
-    def get_temp_file(file_id: str) -> tuple:
-        """
-        Recuperar archivo temporal desde almacenamiento en memoria
-        
-        Args:
-            file_id (str): UUID del archivo
-            
-        Returns:
-            tuple: (file_bytes, filename) o (None, None) si no existe
-        """
-        if file_id in _temp_files:
-            file_data = _temp_files[file_id]
-            file_data['bytes'].seek(0)  # Reiniciar puntero
-            return file_data['bytes'], file_data['filename']
-        return None, None
-    
-    @staticmethod
-    def cleanup_temp_file(file_id: str) -> None:
-        """
-        Eliminar archivo temporal del almacenamiento
-        
-        Args:
-            file_id (str): UUID del archivo
-        """
-        if file_id in _temp_files:
-            del _temp_files[file_id]
-            logger.info(f"Archivo temporal eliminado: {file_id}")
-    
-
+    def recommend_chart(self, filepath: str) -> Dict[str, Any]:
         """
         Recomendar tipos de gráficos basados en datos de archivo cargado
         
