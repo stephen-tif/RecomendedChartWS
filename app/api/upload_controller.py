@@ -5,7 +5,8 @@ Siguiendo los principios de diseño RESTful API
 """
 import logging
 import io
-from flask import Blueprint, request, jsonify
+import base64
+from flask import Blueprint, request, jsonify, session
 from app.services.file_service import FileService
 from app.services.chart_service import ChartService
 from app.utils.validators import validate_file
@@ -96,7 +97,13 @@ def upload_file():
             logger.error(f"Error generando recomendaciones: {str(e)}", exc_info=True)
             raise
         
-        # Combinatsr resultados
+        # Guardar el archivo en sesión para uso posterior (codificado en base64)
+        file_bytes.seek(0)
+        file_content = file_bytes.read()
+        session['uploaded_file_base64'] = base64.b64encode(file_content).decode('utf-8')
+        session['uploaded_filename'] = filename
+        
+        # Combinar resultados
         response = {
             'status': 'success',
             'message': 'Archivo cargado y analizado exitosamente',
