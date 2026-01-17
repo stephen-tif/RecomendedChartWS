@@ -5,7 +5,8 @@ Siguiendo los principios de diseño RESTful API
 """
 import logging
 import io
-from flask import Blueprint, request, jsonify
+import base64
+from flask import Blueprint, request, jsonify, session
 from app.services.chart_service import ChartService
 
 logger = logging.getLogger(__name__)
@@ -19,168 +20,140 @@ def get_chart_data():
     """
     Obtener datos agregados y formateados para un gráfico específico
     
-    Soporta dos modos de solicitud:
+    Este endpoint recibe parámetros del gráfico y devuelve solo los datos
+    procesados y agregados necesarios para la visualización. Esto evita enviar
+    todo el conjunto de datos sin procesar al frontend.
     
-    1. CON ARCHIVO (multipart):
-        - Enviar el archivo en el campo 'file'
-        - Parámetros en campos de formulario: chart_type, parameters (JSON), aggregation (opcional)
-        
-    2. CON FILEPATH (JSON):
-        - Parámetros en JSON: filepath, chart_type, parameters, aggregation (opcional)
+    Cuerpo de la solicitud (JSON):
+        {
+            "filepath": "ruta/al/archivo.csv",
+            "chart_type": "bar|line|pie|scatter",
+            "parameters": {
+                "x_axis": "NombreColumna",
+                "y_axis": "NombreColumna"  // opcional para gráficos circulares
+            },
+            "aggregation": "sum|mean|count|max|min"  // opcional, default: "sum"
+        }
     
     Retorna:
-        Respuesta JSON con datos del gráfico formateados
-        
+        Respuesta JSON con:
+            - chart_type: Tipo de gráfico
+            - data: Datos formateados (estructura varía según tipo de gráfico)
+                - Para bar/line: {labels: [], values: [], data: []}
+                - Para pie: {labels: [], values: [], data: []}
+                - Para scatter: {data: [{x, y}], x_values: [], y_values: []}
+            - parameters: Parámetros originales utilizados
+            - aggregation: Función de agregación utilizada
+            
     Códigos de estado:
         - 200: Éxito
-        - 400: Solicitud inválida
+        - 400: Solicitud inválida (parámetros faltantes/inválidos)
         - 404: Archivo no encontrado
         - 500: Error del servidor
+    
+    Ejemplo de solicitud:
+        POST /api/chart/data
+        {
+            "filepath": "uploads/sales_data.csv",
+            "chart_type": "bar",
+            "parameters": {
+                "x_axis": "Region",
+                "y_axis": "Sales"
+            },
+            "aggregation": "sum"
+        }
     """
     try:
-        # Verificar si es una solicitud multipart (con archivo)
-        if 'file' in request.files:
-            logger.info("Modo: solicitud con archivo multipart")
-            file = request.files['file']
-            
-            if not file or file.filename == '':
-                return jsonify({
-                    'error': 'Archivo requerido',
-                    'message': 'Por favor proporciona un archivo en el campo "file"'
-                }), 400
-            
-            # Obtener parámetros desde formulario
-            chart_type = request.form.get('chart_type')
-            parameters_json = request.form.get('parameters')
-            aggregation = request.form.get('aggregation', 'sum')
-            
-            if not chart_type:
-                return jsonify({
-                    'error': 'Campo requerido faltante',
-                    'message': 'chart_type es requerido'
-                }), 400
-            
-            if not parameters_json:
-                return jsonify({
-                    'error': 'Campo requerido faltante',
-                    'message': 'parameters es requerido (como JSON string)'
-                }), 400
-            
-            # Parsear parámetros JSON
-            import json
+        data = request.get_json()
+        
+        # Validar datos de la solicitud
+        if not data:
+            logger.warning("Solicitud de datos de gráfico recibida sin cuerpo JSON")
+            return jsonify({
+                'error': 'No se proporcionaron datos',
+                'message': 'Por favor proporciona un cuerpo de solicitud con filepath, chart_type y parameters'
+            }), 400
+        
+        # Extraer campos requeridos
+        filepath = data.get('filepath')
+        chart_type = data.get('chart_type')
+        parameters = data.get('parameters')
+        aggregation = data.get('aggregation', 'sum')
+        
+        # Validar campos requeridos
+        if not filepath:
+            return jsonify({
+                'error': 'Campo requerido faltante',
+                'message': 'filepath es requerido'
+            }), 400
+        
+        if not chart_type:
+            return jsonify({
+                'error': 'Campo requerido faltante',
+                'message': 'chart_type es requerido'
+            }), 400
+        
+        if not parameters:
+            return jsonify({
+                'error': 'Campo requerido faltante',
+                'message': 'objeto parameters es requerido'
+            }), 400
+        
+        # Validar chart_type
+        valid_types = ['bar', 'line', 'pie', 'scatter']
+        if chart_type not in valid_types:
+            return jsonify({
+                'error': 'chart_type inválido',
+                'message': f'chart_type debe ser uno de: {", ".join(valid_types)}'
+            }), 400
+        
+        # Validar parámetros
+        if not isinstance(parameters, dict):
+            return jsonify({
+                'error': 'Parámetros inválidos',
+                'message': 'parameters debe ser un objeto'
+            }), 400
+        
+        if 'x_axis' not in parameters:
+            return jsonify({
+                'error': 'Parámetro faltante',
+                'message': 'parameters debe incluir x_axis'
+            }), 400
+        
+        # Verificar si hay un archivo en la sesión (del último upload)
+        uploaded_file_base64 = session.get('uploaded_file_base64')
+        uploaded_filename = session.get('uploaded_filename')
+        
+        # Si hay un archivo en sesión, usarlo directamente (Vercel/memoria)
+        if uploaded_file_base64 and uploaded_filename:
             try:
-                parameters = json.loads(parameters_json)
-            except json.JSONDecodeError as e:
-                return jsonify({
-                    'error': 'JSON inválido',
-                    'message': f'parameters debe ser un JSON válido: {str(e)}'
-                }), 400
-            
-            # Procesar archivo como BytesIO
-            file.seek(0)
-            file_bytes = io.BytesIO(file.read())
-            filename = file.filename
-            
-            logger.info(f"Procesando archivo: {filename}")
-            
-            # Validar parámetros
-            if not isinstance(parameters, dict):
-                return jsonify({
-                    'error': 'Parámetros inválidos',
-                    'message': 'parameters debe ser un objeto JSON'
-                }), 400
-            
-            if 'x_axis' not in parameters:
-                return jsonify({
-                    'error': 'Parámetro faltante',
-                    'message': 'parameters debe incluir x_axis'
-                }), 400
-            
-            # Validar chart_type
-            valid_types = ['bar', 'line', 'pie', 'scatter']
-            if chart_type not in valid_types:
-                return jsonify({
-                    'error': 'chart_type inválido',
-                    'message': f'chart_type debe ser uno de: {", ".join(valid_types)}'
-                }), 400
-            
-            # Obtener datos del gráfico desde archivo
-            try:
+                # Decodificar el archivo desde base64
+                file_content = base64.b64decode(uploaded_file_base64)
+                file_bytes = io.BytesIO(file_content)
+                
                 chart_data = chart_service.get_chart_data_bytes(
                     file_bytes=file_bytes,
-                    filename=filename,
+                    filename=uploaded_filename,
                     chart_type=chart_type,
                     parameters=parameters,
                     aggregation=aggregation
                 )
             except Exception as e:
-                logger.error(f"Error generando datos del gráfico: {str(e)}", exc_info=True)
+                logger.error(f"Error usando archivo en memoria de sesión: {str(e)}", exc_info=True)
                 return jsonify({
                     'error': 'Error interno del servidor',
-                    'message': 'Ocurrió un error al generar los datos del gráfico.'
+                    'message': 'Ocurrió un error al generar los datos del gráfico. Por favor intenta nuevamente.'
                 }), 500
-        
         else:
-            # Modo JSON con filepath
-            logger.info("Modo: solicitud JSON con filepath")
-            data = request.get_json()
-            
-            # Validar datos de la solicitud
-            if not data:
-                logger.warning("Solicitud de datos de gráfico recibida sin datos")
-                return jsonify({
-                    'error': 'No se proporcionaron datos',
-                    'message': 'Por favor proporciona un cuerpo de solicitud o archivo multipart'
-                }), 400
-            
-            # Extraer campos requeridos
-            filepath = data.get('filepath')
-            chart_type = data.get('chart_type')
-            parameters = data.get('parameters')
-            aggregation = data.get('aggregation', 'sum')
-            
-            # Validar campos requeridos
+            # Intentar usar filepath si está disponible (para compatibilidad con ambientes locales)
             if not filepath:
                 return jsonify({
-                    'error': 'Campo requerido faltante',
-                    'message': 'filepath es requerido'
+                    'error': 'Error de configuración',
+                    'message': 'No hay archivo disponible. Por favor carga un archivo primero.'
                 }), 400
             
-            if not chart_type:
-                return jsonify({
-                    'error': 'Campo requerido faltante',
-                    'message': 'chart_type es requerido'
-                }), 400
-            
-            if not parameters:
-                return jsonify({
-                    'error': 'Campo requerido faltante',
-                    'message': 'objeto parameters es requerido'
-                }), 400
-            
-            # Validar chart_type
-            valid_types = ['bar', 'line', 'pie', 'scatter']
-            if chart_type not in valid_types:
-                return jsonify({
-                    'error': 'chart_type inválido',
-                    'message': f'chart_type debe ser uno de: {", ".join(valid_types)}'
-                }), 400
-            
-            # Validar parámetros
-            if not isinstance(parameters, dict):
-                return jsonify({
-                    'error': 'Parámetros inválidos',
-                    'message': 'parameters debe ser un objeto'
-                }), 400
-            
-            if 'x_axis' not in parameters:
-                return jsonify({
-                    'error': 'Parámetro faltante',
-                    'message': 'parameters debe incluir x_axis'
-                }), 400
-            
-            # Obtener datos del gráfico desde filepath
             try:
+                # Intentar cargar desde filepath (puede fallar en Vercel)
                 chart_data = chart_service.get_chart_data(
                     filepath=filepath,
                     chart_type=chart_type,
@@ -188,20 +161,18 @@ def get_chart_data():
                     aggregation=aggregation
                 )
             except FileNotFoundError:
+                # Si el archivo no existe en disco, informar al usuario
                 logger.error(f"Archivo no encontrado: {filepath}")
                 return jsonify({
                     'error': 'Archivo no disponible',
-                    'message': 'El archivo especificado no fue encontrado.'
+                    'message': 'El archivo ha expirado o no está disponible. Por favor carga el archivo nuevamente.'
                 }), 404
             except Exception as e:
-                logger.error(f"Error generando datos del gráfico: {str(e)}", exc_info=True)
+                logger.error(f"Error generando datos del gráfico: {str(e)}")
                 return jsonify({
                     'error': 'Error interno del servidor',
-                    'message': 'Ocurrió un error al generar los datos del gráfico.'
+                    'message': 'Ocurrió un error al generar los datos del gráfico. Por favor intenta nuevamente.'
                 }), 500
-        
-        # Si llegamos aquí, tenemos chart_data válido
-        logger.info(f"Datos de gráfico {chart_type} generados exitosamente")
         
         logger.info(f"Datos de gráfico {chart_type} generados exitosamente")
         
