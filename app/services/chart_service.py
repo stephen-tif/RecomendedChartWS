@@ -67,6 +67,9 @@ class ChartService:
                     'column_types': df_summary['column_types']
                 }
             }
+        except Exception as e:
+            logger.error(f"Error en recomendación de gráficos: {str(e)}")
+            raise
     
     def recommend_chart_file(self, file_bytes: Any, filename: str) -> Dict[str, Any]:
         """
