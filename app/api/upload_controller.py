@@ -96,15 +96,10 @@ def upload_file():
             logger.error(f"Error generando recomendaciones: {str(e)}", exc_info=True)
             raise
         
-        # Guardar archivo temporalmente en memoria (sin usar sesión para evitar headers grandes)
-        file_bytes.seek(0)
-        file_id = chart_service.save_temp_file(file_bytes, filename)
-        
-        # Combinar resultados
+        # Combinatsr resultados
         response = {
             'status': 'success',
             'message': 'Archivo cargado y analizado exitosamente',
-            'file_id': file_id,  # ID para usar en siguientes requests
             'file_info': {
                 'filename': filename,
                 'size': file_size,
@@ -115,7 +110,6 @@ def upload_file():
         }
         
         logger.info(f"Carga procesada exitosamente y generadas {len(response['recommendations'])} recomendaciones")
-        logger.info(f"Archivo temporal guardado con ID: {file_id}")
         
         return jsonify(response), 200
         
