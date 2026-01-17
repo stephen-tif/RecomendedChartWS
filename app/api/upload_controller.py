@@ -5,9 +5,11 @@ Siguiendo los principios de diseño RESTful API
 """
 import logging
 import io
+import base64
 from flask import Blueprint, request, jsonify, session
 from app.services.file_service import FileService
 from app.services.chart_service import ChartService
+from app.utils.validators import validate_file
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +65,6 @@ def upload_file():
             }), 400
         
         # Validar extensión del archivo antes de procesar
-        from app.utils.validators import validate_file
         try:
             validate_file(file)
         except ValueError as e:
@@ -85,13 +86,21 @@ def upload_file():
         file_bytes = io.BytesIO(file.read())
         file_bytes.name = filename
         
-        # Obtener recomendaciones de gráficos directamente desde bytes
-        # Sin intentar guardar a disco (Vercel tiene filesystem de solo lectura)
-        recommendations_result = chart_service.recommend_chart_file(file_bytes, filename)
+        logger.info(f"Iniciando análisis de archivo: {filename}")
         
-        # Guardar el archivo en sesión para uso posterior
+        try:
+            # Obtener recomendaciones de gráficos directamente desde bytes
+            # Sin intentar guardar a disco (Vercel tiene filesystem de solo lectura)
+            recommendations_result = chart_service.recommend_chart_file(file_bytes, filename)
+            logger.info(f"Recomendaciones generadas exitosamente para {filename}")
+        except Exception as e:
+            logger.error(f"Error generando recomendaciones: {str(e)}", exc_info=True)
+            raise
+        
+        # Guardar el archivo en sesión para uso posterior (codificado en base64)
         file_bytes.seek(0)
-        session['uploaded_file'] = file_bytes
+        file_content = file_bytes.read()
+        session['uploaded_file_base64'] = base64.b64encode(file_content).decode('utf-8')
         session['uploaded_filename'] = filename
         
         # Combinar resultados

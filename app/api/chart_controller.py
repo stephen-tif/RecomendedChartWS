@@ -5,6 +5,7 @@ Siguiendo los principios de diseño RESTful API
 """
 import logging
 import io
+import base64
 from flask import Blueprint, request, jsonify, session
 from app.services.chart_service import ChartService
 
@@ -120,21 +121,25 @@ def get_chart_data():
             }), 400
         
         # Verificar si hay un archivo en la sesión (del último upload)
-        uploaded_file = session.get('uploaded_file')
+        uploaded_file_base64 = session.get('uploaded_file_base64')
         uploaded_filename = session.get('uploaded_filename')
         
         # Si hay un archivo en sesión, usarlo directamente (Vercel/memoria)
-        if uploaded_file and uploaded_filename:
+        if uploaded_file_base64 and uploaded_filename:
             try:
+                # Decodificar el archivo desde base64
+                file_content = base64.b64decode(uploaded_file_base64)
+                file_bytes = io.BytesIO(file_content)
+                
                 chart_data = chart_service.get_chart_data_bytes(
-                    file_bytes=uploaded_file,
+                    file_bytes=file_bytes,
                     filename=uploaded_filename,
                     chart_type=chart_type,
                     parameters=parameters,
                     aggregation=aggregation
                 )
             except Exception as e:
-                logger.error(f"Error usando archivo en memoria de sesión: {str(e)}")
+                logger.error(f"Error usando archivo en memoria de sesión: {str(e)}", exc_info=True)
                 return jsonify({
                     'error': 'Error interno del servidor',
                     'message': 'Ocurrió un error al generar los datos del gráfico. Por favor intenta nuevamente.'
