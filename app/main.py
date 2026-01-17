@@ -5,7 +5,6 @@ Siguiendo el Patrón de Fábrica de Aplicación
 """
 import os
 import logging
-from logging.handlers import RotatingFileHandler
 from flask import Flask, jsonify
 from flask.logging import default_handler
 
@@ -66,32 +65,25 @@ def configure_logging(app: Flask, config_name: str) -> None:
         app (Flask): Instancia de la aplicación Flask
         config_name (str): Nombre del ambiente de configuración
     """
-    if not app.debug:
-        # Logging de producción
-        if not os.path.exists('logs'):
-            os.mkdir('logs')
-        
-        file_handler = RotatingFileHandler(
-            'logs/app.log',
-            maxBytes=10240000,  # 10MB
-            backupCount=10
-        )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        ))
-        file_handler.setLevel(logging.INFO)
-        app.logger.addHandler(file_handler)
-        app.logger.setLevel(logging.INFO)
-        app.logger.info('Inicio de aplicación')
-    else:
-        # Logging de desarrollo - usar consola
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s'
-        ))
+    # En producción y serverless: usar solo consola (stdout/stderr)
+    # Vercel captura automáticamente los logs de consola
+    # Evitar escribir a archivos en sistemas de solo lectura
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s'
+    ))
+    
+    if app.debug:
+        # Logging de desarrollo - nivel DEBUG
         console_handler.setLevel(logging.DEBUG)
-        app.logger.addHandler(console_handler)
         app.logger.setLevel(logging.DEBUG)
+    else:
+        # Logging de producción - nivel INFO
+        console_handler.setLevel(logging.INFO)
+        app.logger.setLevel(logging.INFO)
+    
+    app.logger.addHandler(console_handler)
+    app.logger.info(f'Aplicación iniciada en ambiente: {config_name}')
 
 
 def register_blueprints(app: Flask) -> None:
