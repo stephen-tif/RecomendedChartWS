@@ -28,14 +28,16 @@ class FileService:
         self._ensure_upload_folder()
     
     def _ensure_upload_folder(self) -> None:
-        """Crear carpeta de carga si no existe"""
+        """Crear carpeta de carga si no existe (solo en sistemas con escritura)"""
         try:
             if not os.path.exists(self.upload_folder):
                 os.makedirs(self.upload_folder)
                 logger.info(f"Carpeta de carga creada: {self.upload_folder}")
         except OSError as e:
-            logger.error(f"Error al crear carpeta de carga: {str(e)}")
-            raise
+            # En sistemas de solo lectura (como Vercel), simplemente loguear pero no fallar
+            logger.warning(f"No se pudo crear/acceder a la carpeta de carga '{self.upload_folder}': {str(e)}. Continuando sin carpeta local.")
+            # No relanzar el error - permitir que la aplicación continúe
+            # Los uploads se pueden manejar a través de servicios externos o en memoria
     
     def _allowed_file(self, filename: str) -> bool:
         """
@@ -92,9 +94,17 @@ class FileService:
         validate_file(file)
         
         try:
-            # Guardar archivo
+            # Intentar guardar archivo
+            # En sistemas de solo lectura (Vercel), esto puede fallar gracefully
             file.save(filepath)
-            file_size = os.path.getsize(filepath)
+            
+            try:
+                file_size = os.path.getsize(filepath)
+            except:
+                # Si no podemos obtener el tamaño, usar el stream
+                file.seek(0, 2)  # Ir al final
+                file_size = file.tell()
+                file.seek(0)  # Volver al inicio
             
             logger.info(f"Archivo cargado exitosamente: {filename} ({file_size} bytes)")
             
@@ -105,12 +115,27 @@ class FileService:
                 'size': file_size
             }
             
-        except Exception as e:
-            logger.error(f"Error al guardar archivo {filename}: {str(e)}")
-            # Limpiar si el archivo fue parcialmente guardado
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except:
-                    pass
-            raise
+        except (OSError, IOError) as e:
+            # En sistemas de solo lectura, registrar pero permitir continuar si es un read-only filesystem
+            if "Read-only file system" in str(e):
+                logger.warning(f"Sistema de archivos de solo lectura. No se puede guardar {filename}, procesando en memoria.")
+                # Aún así, retornar información del archivo para procesamiento en memoria
+                file.seek(0)
+                file_size = len(file.read())
+                file.seek(0)
+                return {
+                    'status': 'success',
+                    'filename': filename,
+                    'filepath': None,  # No hay ruta física
+                    'size': file_size,
+                    'in_memory': True
+                }
+            else:
+                logger.error(f"Error al guardar archivo {filename}: {str(e)}")
+                # Limpiar si el archivo fue parcialmente guardado
+                if os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+                raise
